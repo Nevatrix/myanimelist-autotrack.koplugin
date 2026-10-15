@@ -79,7 +79,8 @@ function Parser.parse(path)
         end
     end
 
-    local junk = { "[Dd]igital", "[Ss]can", "[Rr]aw", "[Ee]nglish", "[Ss]panish", "[Ee]spañol" }
+    -- "KCC" shows up because calibre names files "{title} - {author}" and KCC sets itself as the author
+    local junk = { "[Dd]igital", "[Ss]can", "[Rr]aw", "[Ee]nglish", "[Ss]panish", "[Ee]spañol", "KCC" }
     for _, j in ipairs(junk) do
         text = text:gsub("%f[%w]" .. j .. "%f[%W]", " ")
     end
@@ -109,6 +110,52 @@ function Parser.chapterFromTitle(title)
     if extract(title, VOLUME_PATTERNS) then return nil end
     local last = title:match("(%d+)%D*$")
     return tonumber(last)
+end
+
+local function words(s)
+    local out = {}
+    for w in s:gmatch("%S+") do table.insert(out, w) end
+    return out
+end
+
+-- "P4", "Pt. 4", "Part4" -> "Part 4" so it lines up with MAL's naming
+function Parser.expandParts(title)
+    return (title:gsub("%f[%w][Pp][Aa]?[Rr]?[Tt]?%.?%s*(%d+)%f[%D]", function(n) return "Part " .. n end))
+end
+
+-- what to send to MAL's search, most specific first.
+-- MAL doesn't do fuzzy matching, so one typo at the end ("Unbreakeable") kills
+-- the whole query; dropping words from the end gets around that
+function Parser.searchQueries(title)
+    local out, seen = {}, {}
+    local function add(q)
+        q = q:gsub("%s+", " "):gsub("^%s+", ""):gsub("[%s%-:]+$", "")
+        if #q >= 3 and not seen[q:lower()] then
+            seen[q:lower()] = true
+            table.insert(out, q)
+        end
+    end
+    local expanded = Parser.expandParts(title)
+    add(expanded)
+    add(title)
+    -- "Series: Subtitle" / "Series - Subtitle"
+    add(expanded:match("^(.-)%s*[:%-]%s") or "")
+    local w = words(expanded)
+    for n = #w - 1, 2, -1 do
+        add(table.concat(w, " ", 1, n))
+    end
+    return out
+end
+
+-- rough similarity between two titles, 0..1 (shared words over the longer one)
+function Parser.similarity(a, b)
+    local wa = words(Parser.normalize(Parser.expandParts(a)))
+    local wb = words(Parser.normalize(Parser.expandParts(b)))
+    if #wa == 0 or #wb == 0 then return 0 end
+    local set, shared = {}, 0
+    for _, x in ipairs(wb) do set[x] = true end
+    for _, x in ipairs(wa) do if set[x] then shared = shared + 1 end end
+    return shared / math.max(#wa, #wb)
 end
 
 -- for comparing titles

@@ -16,6 +16,7 @@ local cases = {
     { "/mnt/base-us/documents/Manga/Blue Lock - Tomo 02 (#005-013).mobi", "Blue Lock", 2, 13, 5 },
     { "Blue Lock - Tomo 01 (#001-004).mobi", "Blue Lock", 1, 4, 1 },
     { "El maestro y Margarita - Mijaíl Bulgákov.epub", "El maestro y Margarita - Mijaíl Bulgákov", nil, nil },
+    { "Jojo's Bizarre Adventure P4 Diamond is Unbreakeable - Tomo 4 - KCC.mobi", "Jojo's Bizarre Adventure P4 Diamond is Unbreakeable", 4, nil },
 }
 local fails = 0
 for _, c in ipairs(cases) do
@@ -34,5 +35,9 @@ for _, c in ipairs(toc) do
     if not ok then fails = fails + 1 end
     print((ok and "OK  " or "FAIL") .. "  toc \"" .. c[1] .. "\" -> " .. tostring(got))
 end
+local q = P.searchQueries("Jojo's Bizarre Adventure P4 Diamond is Unbreakeable")
+local okq = q[1] == "Jojo's Bizarre Adventure Part 4 Diamond is Unbreakeable" and q[#q] == "Jojo's Bizarre"
+if not okq then fails = fails + 1 end
+print((okq and "OK  " or "FAIL") .. "  search queries: " .. table.concat(q, " | "))
 print(fails == 0 and "All good" or (fails .. " failed"))
 if fails > 0 then os.exit(1) end

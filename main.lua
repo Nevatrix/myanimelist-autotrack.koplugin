@@ -131,14 +131,20 @@ function MALSync:getBookInfo()
     local file = self.ui.document and self.ui.document.file
     if not file then return nil end
     local info = Parser.parse(file)
+    local props = self.ui.doc_props or {}
+    -- calibre names files "{title} - {author}", drop the author if it's stuck at the end
+    local author = type(props.authors) == "string" and props.authors:match("^[^\n]+") or nil
+    if author and #author > 1 then
+        local low, a = info.title:lower(), " - " .. author:lower()
+        if low:sub(-#a) == a then info.title = info.title:sub(1, -#a - 1) end
+    end
     -- files like "Vol 03.cbz": use the folder name instead
     if info.title == "" then
         local parent = Parser.parentdir(file)
-        if parent then info.title = Parser.parse(parent).title end
+        if parent and parent ~= "documents" and parent ~= author then info.title = Parser.parse(parent).title end
     end
-    if info.title == "" then
-        local props = self.ui.doc_props or {}
-        if props.title then info.title = Parser.parse(props.title).title end
+    if info.title == "" and props.title then
+        info.title = Parser.parse(props.title).title
     end
     if info.title == "" then return nil end
     -- no chapters in the name? the toc might have them ("Blue Lock 32" ... "Blue Lock 40")
@@ -354,8 +360,26 @@ function MALSync:flushQueue(interactive)
     if sent > 0 then logger.info("MAL Autotrack: sent", sent, "updates") end
 end
 
+-- wikipedia sometimes numbers things differently than the MAL entry
+-- (jojo counts volumes across all parts, MAL has one entry per part).
+-- if the table has way more volumes than MAL says, don't trust it
+local function fitsManga(vols, manga)
+    if not vols then return nil end
+    local total = tonumber(manga.num_volumes) or 0
+    if total == 0 then return vols end
+    local max_vol = 0
+    for v in pairs(vols) do max_vol = math.max(max_vol, v) end
+    if max_vol > total + 1 then return nil end
+    return vols
+end
+
 -- volume -> chapters table from wikipedia, cached per series
 function MALSync:getVolumeTable(mapping, manga)
+    local vols = self:fetchVolumeTable(mapping, manga)
+    return fitsManga(vols, manga)
+end
+
+function MALSync:fetchVolumeTable(mapping, manga)
     if not self.settings:isTrue("use_wikipedia") then return nil end
     local cache = self.settings:readSetting("wiki_cache", {})
     local id = tostring(mapping.id)
@@ -460,12 +484,23 @@ function MALSync:pickBest(key, results)
         if not NOVEL_TYPES[node.media_type] then table.insert(candidates, node) end
     end
     if #candidates == 0 then candidates = results end
+    -- best looking match first; MAL's own ranking is by popularity
+    local score = {}
     for _, node in ipairs(candidates) do
-        for _, t in ipairs(titlesOf(node)) do
-            if Parser.normalize(t) == key then return node, true, candidates end
+        local s = 0
+        for _, tt in ipairs(titlesOf(node)) do
+            if Parser.normalize(tt) == key then return node, true, candidates end
+            s = math.max(s, Parser.similarity(key, tt))
         end
+        score[node] = s
     end
-    return candidates[1], false, candidates
+    local order = {}
+    for i, node in ipairs(candidates) do order[node] = i end
+    table.sort(candidates, function(a, b)
+        if score[a] ~= score[b] then return score[a] > score[b] end
+        return order[a] < order[b]
+    end)
+    return candidates[1], false, candidates, score[candidates[1]]
 end
 
 function MALSync:setMapping(key, node)
@@ -475,10 +510,20 @@ function MALSync:setMapping(key, node)
 end
 
 function MALSync:resolveMapping(item)
-    local results, err = self.api:searchManga(item.title)
-    if not results then
-        logger.warn("MAL Autotrack: search failed", err)
-        return
+    -- try the full title, then shorter versions of it (see Parser.searchQueries)
+    local results, seen = {}, {}
+    for i, q in ipairs(Parser.searchQueries(item.title)) do
+        if i > 5 then break end
+        local found, err = self.api:searchManga(q)
+        if not found then
+            logger.warn("MAL Autotrack: search failed", err)
+            return
+        end
+        for _, node in ipairs(found) do
+            if not seen[node.id] then seen[node.id] = true; table.insert(results, node) end
+        end
+        local _, exact, _, score = self:pickBest(item.key, found)
+        if #found > 0 and (exact or (score or 0) >= 0.5) then break end
     end
     if #results == 0 then
         if self.ui and self.ui.document then
