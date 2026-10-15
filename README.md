@@ -99,11 +99,12 @@ CI runs all of that on every push and PR.
 
 To cut a release:
 
-1. Bump `version` in `_meta.lua` (e.g. `"0.2"`).
-2. Commit and push.
-3. `git tag v0.2 && git push origin v0.2`
+1. Bump `version` in `_meta.lua` (e.g. `"0.2.0"`).
+2. `python tools/changelog.py --write --next v0.2.0` to refresh `CHANGELOG.md`.
+3. Commit both (`chore(release): 0.2.0`), merge to `main`.
+4. `git tag v0.2.0 && git push origin v0.2.0`
 
-The release workflow checks the tag matches `_meta.lua`, builds the zip and publishes the release. Installed copies pick it up on their own.
+The release workflow checks the tag matches `_meta.lua`, builds the zip and publishes the release. Its notes are generated from the conventional commits since the previous tag, grouped by type (features, fixes, docs...). Installed copies pick the new version up on their own.
 
 ## License
 
