@@ -18,6 +18,7 @@ One Piece - c1100.cbz                 ->  One Piece, ch 1100
 - No WiFi? Updates get queued and sent once you're back online.
 - It never lowers your progress and never touches anything already *Completed*.
 - Files with no volume or chapter number (novels, regular books) are skipped.
+- You can limit it to your manga folders, so nothing outside them ever gets synced.
 - Updates itself from this repo's releases.
 
 Volume/chapter detection understands `v03`, `Vol. 3`, `Volume 3`, `Tomo 3`, `c012`, `ch. 12`, `Chapter 12`, `Capitulo 12` and `#005-013` style ranges.
@@ -67,6 +68,7 @@ Under **Tools → MyAnimeList Autotrack**:
 
 - **Language**: English or Español. By default it follows KOReader's language (and falls back to English).
 - **Enabled**: turns everything on/off.
+- **Manga folders**: only sync books inside these folders (subfolders included). Add the open book's folder in one tap, pick one with the folder chooser, or tap a folder in the list to remove it. Empty list = every folder counts. You can also long-press a folder in the file manager and choose **Mark as manga folder**.
 - **Confirm new series**: ask before linking a series that isn't an exact match.
 - **Use Wikipedia**: fill in missing volume/chapter info from Wikipedia.
 - **Ask for a score**: show the 1-10 score dialog when a series gets completed.

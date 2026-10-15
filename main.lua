@@ -27,9 +27,14 @@ local WIKI_MISS_TTL = 7 * 24 * 3600
 local DAY = 24 * 3600
 local NOVEL_TYPES = { light_novel = true, novel = true }
 
+local function notify(text, timeout)
+    UIManager:show(InfoMessage:new{ text = text, timeout = timeout or 3 })
+end
+
 local MALSync = WidgetContainer:extend{
     name = "malautotrack",
-    is_doc_only = true,
+    -- also loads in the file manager, for the "mark as manga folder" long-press button
+    is_doc_only = false,
 }
 
 function MALSync:init()
@@ -54,6 +59,131 @@ function MALSync:init()
     I18n.set(self.settings:readSetting("language", "auto"))
     self:loadCredentials()
     self.ui.menu:registerToMainMenu(self)
+    -- in the file manager: long-press a folder to mark it as a manga folder
+    if not self.ui.document and self.ui.addFileDialogButtons then
+        self.ui:addFileDialogButtons("malautotrack_folder", function(file, is_file)
+            if is_file then return nil end
+            return { self:genFolderButton(file) }
+        end)
+    end
+end
+
+function MALSync:onCloseWidget()
+    if self.ui and not self.ui.document and self.ui.removeFileDialogButtons then
+        self.ui:removeFileDialogButtons("malautotrack_folder")
+    end
+end
+
+-- manga folders ---------------------------------------------------------------
+-- empty list = every folder counts (the old behavior)
+
+-- the kindle mounts the same storage as /mnt/us and /mnt/base-us, so compare real paths
+local function realpath(p)
+    local ok, util = pcall(require, "ffi/util")
+    local r = ok and util.realpath and util.realpath(p) or nil
+    return ((r or p):gsub("/+$", ""))
+end
+
+function MALSync:getFolders()
+    return self.settings:readSetting("manga_folders", {})
+end
+
+function MALSync:isFolderMarked(folder)
+    local rf = realpath(folder)
+    for i, d in ipairs(self:getFolders()) do
+        if realpath(d) == rf then return i end
+    end
+end
+
+function MALSync:inMangaFolder(file)
+    local folders = self:getFolders()
+    if #folders == 0 then return true end
+    if not file then return false end
+    local f = realpath(file)
+    for _, d in ipairs(folders) do
+        local rd = realpath(d)
+        if f == rd or f:sub(1, #rd + 1) == rd .. "/" then return true end
+    end
+    return false
+end
+
+function MALSync:toggleFolder(folder)
+    local folders = self:getFolders()
+    local i = self:isFolderMarked(folder)
+    if i then
+        table.remove(folders, i)
+        notify(T(_("Not a manga folder anymore: %1"), folder))
+    else
+        table.insert(folders, realpath(folder))
+        notify(T(_("Manga folder added: %1"), realpath(folder)))
+    end
+    self.settings:saveSetting("manga_folders", folders)
+    self.settings:flush()
+end
+
+function MALSync:genFolderButton(folder)
+    return {
+        text = self:isFolderMarked(folder) and _("Unmark as manga folder") or _("Mark as manga folder"),
+        callback = function()
+            local fc = self.ui.file_chooser
+            if fc and fc.file_dialog then UIManager:close(fc.file_dialog) end
+            self:toggleFolder(folder)
+        end,
+    }
+end
+
+function MALSync:chooseFolder()
+    local PathChooser = require("ui/widget/pathchooser")
+    local start = self.ui.document and self.ui.document.file and self.ui.document.file:match("(.*)/") or G_reader_settings:readSetting("home_dir") or "/"
+    UIManager:show(PathChooser:new{
+        select_directory = true,
+        select_file = false,
+        show_files = false,
+        path = start,
+        onConfirm = function(path)
+            if not self:isFolderMarked(path) then self:toggleFolder(path) end
+        end,
+    })
+end
+
+function MALSync:getFoldersMenu()
+    local file = self.ui.document and self.ui.document.file
+    local folders = self:getFolders()
+    local items = {
+        {
+            text_func = function()
+                if #self:getFolders() == 0 then return _("No folders set: every folder counts") end
+                if not file then return T(_("%1 manga folders"), #self:getFolders()) end
+                return self:inMangaFolder(file) and _("This book: inside a manga folder") or _("This book: outside the manga folders")
+            end,
+            enabled_func = function() return false end,
+            separator = true,
+        },
+        {
+            text = _("Add this book's folder"),
+            enabled_func = function() return file ~= nil and not self:isFolderMarked(file:match("(.*)/")) end,
+            callback = function() self:toggleFolder(file:match("(.*)/")) end,
+        },
+        {
+            text = _("Choose folder…"),
+            callback = function() self:chooseFolder() end,
+            separator = true,
+        },
+    }
+    for _, d in ipairs(folders) do
+        table.insert(items, {
+            text = d,
+            checked_func = function() return self:isFolderMarked(d) ~= nil end,
+            callback = function()
+                UIManager:show(ConfirmBox:new{
+                    text = T(_("Stop syncing books in %1?"), d),
+                    ok_text = _("Remove"),
+                    ok_callback = function() self:toggleFolder(d) end,
+                })
+            end,
+        })
+    end
+    return items
 end
 
 -- dead simple .env parser, that's all I need
@@ -127,10 +257,6 @@ function MALSync:onFlushSettings()
     self:save()
 end
 
-local function notify(text, timeout)
-    UIManager:show(InfoMessage:new{ text = text, timeout = timeout or 3 })
-end
-
 function MALSync:getBookInfo()
     local file = self.ui.document and self.ui.document.file
     if not file then return nil end
@@ -201,6 +327,8 @@ function MALSync:onReaderReady()
         self:askPendingScore()
         if NetworkMgr:isOnline() then self:checkStale() end
     end)
+    -- outside the manga folders (if I set any): not my business
+    if not self:inMangaFolder(self.ui.document and self.ui.document.file) then return end
     local info = self:getBookInfo()
     -- no volume or chapter means it's probably a regular book, skip it
     -- (can still be sent by hand from the menu)
@@ -216,6 +344,7 @@ end
 function MALSync:markFinished()
     if self.finished_sent or not self.settings:isTrue("enabled") or not self.api then return end
     if self:getPercent() < FINISH_THRESHOLD then return end
+    if not self:inMangaFolder(self.ui.document and self.ui.document.file) then return end
     local info = self:getBookInfo()
     if not info or (not info.volume and not info.chapter) then return end
     self.finished_sent = true
@@ -789,6 +918,13 @@ function MALSync:getSubMenu()
             text = _("Enabled"),
             checked_func = function() return self.settings:isTrue("enabled") end,
             callback = function() self.settings:toggle("enabled"); self.settings:flush() end,
+        },
+        {
+            text_func = function()
+                local n = #self:getFolders()
+                return n == 0 and _("Manga folders: all") or T(_("Manga folders: %1"), n)
+            end,
+            sub_item_table_func = function() return self:getFoldersMenu() end,
         },
         {
             text = _("Confirm new series before linking them"),

@@ -64,6 +64,20 @@ local es = {
     ["Suggest On hold after %1 weeks without reading"] = "Sugerir On hold tras %1 semanas sin leer",
     ["Never"] = "Nunca",
     ["%1 weeks"] = "%1 semanas",
+    ["Not a manga folder anymore: %1"] = "Ya no es carpeta de manga: %1",
+    ["Manga folder added: %1"] = "Carpeta de manga añadida: %1",
+    ["Unmark as manga folder"] = "Quitar como carpeta de manga",
+    ["Mark as manga folder"] = "Marcar como carpeta de manga",
+    ["No folders set: every folder counts"] = "Sin carpetas: cuenta cualquier carpeta",
+    ["%1 manga folders"] = "%1 carpetas de manga",
+    ["This book: inside a manga folder"] = "Este libro: dentro de una carpeta de manga",
+    ["This book: outside the manga folders"] = "Este libro: fuera de las carpetas de manga",
+    ["Add this book's folder"] = "Añadir la carpeta de este libro",
+    ["Choose folder…"] = "Elegir carpeta…",
+    ["Stop syncing books in %1?"] = "¿Dejar de sincronizar los libros de %1?",
+    ["Remove"] = "Quitar",
+    ["Manga folders: all"] = "Carpetas de manga: todas",
+    ["Manga folders: %1"] = "Carpetas de manga: %1",
 }
 
 local tables = { es = es }
