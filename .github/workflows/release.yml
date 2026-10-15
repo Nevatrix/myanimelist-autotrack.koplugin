@@ -1,7 +1,9 @@
 name: Release
 
-# to cut a release: bump "version" in _meta.lua, commit, then
-#   git tag v0.2 && git push origin v0.2
+# to cut a release: bump "version" in _meta.lua, run
+#   python tools/changelog.py --write
+# commit both, merge to main, then
+#   git tag v0.2.0 && git push origin v0.2.0
 
 on:
   push:
@@ -19,6 +21,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the changelog needs every tag and commit
 
       - name: Check the tag matches _meta.lua
         run: |
@@ -33,12 +37,17 @@ jobs:
         run: |
           DIR=dist/myanimelist-autotrack.koplugin
           mkdir -p "$DIR"
-          cp *.lua .env.example README.md LICENSE "$DIR"/
+          cp *.lua .env.example README.md CHANGELOG.md LICENSE "$DIR"/
           cd dist && zip -r myanimelist-autotrack.koplugin.zip myanimelist-autotrack.koplugin
           unzip -l myanimelist-autotrack.koplugin.zip
+
+      - name: Release notes from the commits
+        run: |
+          python3 tools/changelog.py --tag "$GITHUB_REF_NAME" > dist/notes.md
+          cat dist/notes.md
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           files: dist/myanimelist-autotrack.koplugin.zip
-          generate_release_notes: true
+          body_path: dist/notes.md

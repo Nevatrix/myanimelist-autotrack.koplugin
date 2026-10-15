@@ -30,10 +30,14 @@ package.preload["ui/uimanager"] = stub({
 })
 package.preload["logger"] = stub({ info = function() end, warn = function() end, err = function() end, dbg = function() end })
 package.preload["gettext"] = stub(function(s) return s end)
-package.preload["ffi/util"] = stub({ template = function(s, ...)
-    local a = { ... }
-    return (s:gsub("%%(%d)", function(i) return tostring(a[tonumber(i)]) end))
-end })
+package.preload["ffi/util"] = stub({
+    template = function(s, ...)
+        local a = { ... }
+        return (s:gsub("%%(%d)", function(i) return tostring(a[tonumber(i)]) end))
+    end,
+    -- like on a kindle: /mnt/base-us is the same storage as /mnt/us
+    realpath = function(path) return (path:gsub("^/mnt/base%-us", "/mnt/us")) end,
+})
 for _, m in ipairs({ "json", "socket.http", "ltn12", "socket", "socketutil" }) do package.preload[m] = stub({}) end
 
 local Plugin = require("main")
@@ -73,7 +77,12 @@ local function open(file, pct, settings)
                toc = { toc = {}, fillToc = function() end, getTocTitleByPage = function() return "" end } },
     }, { __index = Plugin })
     p:init()
-    if settings then p.settings = settings; p.mappings = settings:readSetting("mappings"); p.queue = settings:readSetting("queue") end
+    if settings then
+        p.settings = settings
+        p.mappings = settings:readSetting("mappings")
+        p.queue = settings:readSetting("queue")
+        p.pending_scores = settings:readSetting("pending_scores", {})
+    end
     p.api = fake_api
     return p
 end
@@ -192,6 +201,97 @@ p.settings:saveSetting("wiki_cache", { ["3008"] = { t = os.time(), vols = (funct
     return v
 end)() } })
 check("wikipedia ignored when volumes don't fit", Plugin2:getVolumeTable({ id = 3008 }, jojo4) == nil)
+
+-- score when a series gets completed -------------------------------------
+local short = { id = 777, title = "Short Manga", media_type = "manga", num_volumes = 2, num_chapters = 10,
+    alternative_titles = { en = "Short Manga" } }
+local short_status = { status = "reading", num_volumes_read = 1, num_chapters_read = 5, score = 0 }
+local short_api = setmetatable({
+    searchManga = function() return { short } end,
+    getManga = function() return setmetatable({ my_list_status = short_status }, { __index = short }) end,
+    updateMangaStatus = function(_, _, f)
+        table.insert(patches, f)
+        for k, val in pairs(f) do short_status[k] = val end
+        return {}
+    end,
+}, { __index = fake_api })
+patches, shown = {}, {}
+p.settings:saveSetting("queue", {}) -- leftovers from the jojo test
+local s = open("/mnt/us/documents/Manga/Short Manga v02.cbz", 0.99, p.settings)
+s.api = short_api
+s:onReaderReady()
+s:onEndOfBook()
+local completed = false
+for _, f in ipairs(patches) do if f.status == "completed" then completed = true end end
+check("last volume completes the series", completed)
+local dlg2 = shown[#shown]
+check("asks for a score", dlg2 and dlg2.title and dlg2.title:find("What score") ~= nil)
+dlg2.buttons[2][3].callback() -- 8
+check("score 8 sent", patches[#patches].score == 8)
+check("pending score cleared", next(s.pending_scores) == nil)
+
+-- score asked at close waits for the next book
+short_status.status, short_status.score = "reading", 0
+patches, shown = {}, {}
+local s2 = open("/mnt/us/documents/Manga/Short Manga v02.cbz", 0.99, p.settings)
+s2.api = short_api
+s2.settings.data.queue = {}
+s2.queue = s2.settings.data.queue
+s2.book_info = s2:getBookInfo()
+s2:onCloseDocument()
+check("no dialog while closing", #shown == 0 and next(s2.pending_scores) ~= nil)
+local s3 = open("/mnt/us/documents/Libros/Some Novel.epub", 0.1, p.settings)
+s3.api = short_api
+s3:onReaderReady()
+check("asked on the next open", shown[#shown] and shown[#shown].title:find("What score") ~= nil)
+
+-- on hold suggestion ---------------------------------------------------------
+short_status.status = "reading"
+patches, shown = {}, {}
+local h = open("/mnt/us/documents/Libros/Other.epub", 0.1, p.settings)
+h.api = short_api
+h.dialog_open = false
+h.mappings["short manga"].last_read = os.time() - 40 * 24 * 3600
+h:checkStale(true)
+local q2 = shown[#shown]
+check("suggests on hold after 4 weeks", q2 and q2.title:find("on hold") ~= nil)
+q2.buttons[1][1].callback()
+check("on_hold sent", patches[#patches] and patches[#patches].status == "on_hold")
+shown = {}
+h.mappings["short manga"].last_read = os.time() - 2 * 24 * 3600
+h:checkStale(true)
+check("no suggestion for something read 2 days ago", #shown == 0)
+
+-- manga folders ---------------------------------------------------------------
+p.settings:saveSetting("queue", {})
+p.settings:saveSetting("manga_folders", { "/mnt/us/documents/Manga" })
+local f1 = open("/mnt/us/documents/Libros/Fundacion 2.epub", 0.1, p.settings)
+f1:onReaderReady()
+check("book outside the manga folders is ignored", #f1.queue == 0 and f1.book_info == nil)
+local f2 = open("/mnt/base-us/documents/Manga/Blue Lock - Tomo 03.mobi", 0.1, p.settings)
+f2.api = setmetatable({ getManga = function() return nil, "network_error" end }, { __index = fake_api })
+f2:onReaderReady()
+check("/mnt/base-us path counts as inside /mnt/us/documents/Manga", f2.book_info ~= nil)
+
+-- long-press in the file manager
+local added
+local fm = setmetatable({
+    path = ".",
+    ui = { menu = { registerToMainMenu = function() end },
+           addFileDialogButtons = function(_, id, fn) added = { id = id, fn = fn } end,
+           file_chooser = {} },
+}, { __index = Plugin })
+fm:init()
+fm.settings = p.settings
+check("registers a long-press button in the file manager", added and added.id == "malautotrack_folder")
+check("no button for files", added.fn("/mnt/us/documents/KCC/x.mobi", true) == nil)
+local row = added.fn("/mnt/us/documents/KCC", false)
+check("folder button says mark", row[1].text == "Mark as manga folder")
+row[1].callback()
+check("KCC folder added", fm:isFolderMarked("/mnt/us/documents/KCC") ~= nil)
+row = added.fn("/mnt/us/documents/KCC", false)
+check("now it says unmark", row[1].text == "Unmark as manga folder")
+p.settings:saveSetting("manga_folders", {})
 
 print(fails == 0 and "All good" or (fails .. " failed"))
 if fails > 0 then os.exit(1) end

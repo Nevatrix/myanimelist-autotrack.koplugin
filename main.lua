@@ -24,11 +24,17 @@ local FINISH_THRESHOLD = 0.95 -- past this, the volume counts as read
 local PROGRESS_DELAY = 15 -- seconds after a chapter change before sending it
 local WIKI_TTL = 14 * 24 * 3600
 local WIKI_MISS_TTL = 7 * 24 * 3600
+local DAY = 24 * 3600
 local NOVEL_TYPES = { light_novel = true, novel = true }
+
+local function notify(text, timeout)
+    UIManager:show(InfoMessage:new{ text = text, timeout = timeout or 3 })
+end
 
 local MALSync = WidgetContainer:extend{
     name = "malautotrack",
-    is_doc_only = true,
+    -- also loads in the file manager, for the "mark as manga folder" long-press button
+    is_doc_only = false,
 }
 
 function MALSync:init()
@@ -47,9 +53,137 @@ function MALSync:init()
     if self.settings:readSetting("confirm_new") == nil then self.settings:saveSetting("confirm_new", true) end
     if self.settings:readSetting("auto_update") == nil then self.settings:saveSetting("auto_update", true) end
     if self.settings:readSetting("use_wikipedia") == nil then self.settings:saveSetting("use_wikipedia", true) end
+    if self.settings:readSetting("ask_score") == nil then self.settings:saveSetting("ask_score", true) end
+    if self.settings:readSetting("onhold_weeks") == nil then self.settings:saveSetting("onhold_weeks", 4) end
+    self.pending_scores = self.settings:readSetting("pending_scores", {})
     I18n.set(self.settings:readSetting("language", "auto"))
     self:loadCredentials()
     self.ui.menu:registerToMainMenu(self)
+    -- in the file manager: long-press a folder to mark it as a manga folder
+    if not self.ui.document and self.ui.addFileDialogButtons then
+        self.ui:addFileDialogButtons("malautotrack_folder", function(file, is_file)
+            if is_file then return nil end
+            return { self:genFolderButton(file) }
+        end)
+    end
+end
+
+function MALSync:onCloseWidget()
+    if self.ui and not self.ui.document and self.ui.removeFileDialogButtons then
+        self.ui:removeFileDialogButtons("malautotrack_folder")
+    end
+end
+
+-- manga folders ---------------------------------------------------------------
+-- empty list = every folder counts (the old behavior)
+
+-- the kindle mounts the same storage as /mnt/us and /mnt/base-us, so compare real paths
+local function realpath(p)
+    local ok, util = pcall(require, "ffi/util")
+    local r = ok and util.realpath and util.realpath(p) or nil
+    return ((r or p):gsub("/+$", ""))
+end
+
+function MALSync:getFolders()
+    return self.settings:readSetting("manga_folders", {})
+end
+
+function MALSync:isFolderMarked(folder)
+    local rf = realpath(folder)
+    for i, d in ipairs(self:getFolders()) do
+        if realpath(d) == rf then return i end
+    end
+end
+
+function MALSync:inMangaFolder(file)
+    local folders = self:getFolders()
+    if #folders == 0 then return true end
+    if not file then return false end
+    local f = realpath(file)
+    for _, d in ipairs(folders) do
+        local rd = realpath(d)
+        if f == rd or f:sub(1, #rd + 1) == rd .. "/" then return true end
+    end
+    return false
+end
+
+function MALSync:toggleFolder(folder)
+    local folders = self:getFolders()
+    local i = self:isFolderMarked(folder)
+    if i then
+        table.remove(folders, i)
+        notify(T(_("Not a manga folder anymore: %1"), folder))
+    else
+        table.insert(folders, realpath(folder))
+        notify(T(_("Manga folder added: %1"), realpath(folder)))
+    end
+    self.settings:saveSetting("manga_folders", folders)
+    self.settings:flush()
+end
+
+function MALSync:genFolderButton(folder)
+    return {
+        text = self:isFolderMarked(folder) and _("Unmark as manga folder") or _("Mark as manga folder"),
+        callback = function()
+            local fc = self.ui.file_chooser
+            if fc and fc.file_dialog then UIManager:close(fc.file_dialog) end
+            self:toggleFolder(folder)
+        end,
+    }
+end
+
+function MALSync:chooseFolder()
+    local PathChooser = require("ui/widget/pathchooser")
+    local start = self.ui.document and self.ui.document.file and self.ui.document.file:match("(.*)/") or G_reader_settings:readSetting("home_dir") or "/"
+    UIManager:show(PathChooser:new{
+        select_directory = true,
+        select_file = false,
+        show_files = false,
+        path = start,
+        onConfirm = function(path)
+            if not self:isFolderMarked(path) then self:toggleFolder(path) end
+        end,
+    })
+end
+
+function MALSync:getFoldersMenu()
+    local file = self.ui.document and self.ui.document.file
+    local folders = self:getFolders()
+    local items = {
+        {
+            text_func = function()
+                if #self:getFolders() == 0 then return _("No folders set: every folder counts") end
+                if not file then return T(_("%1 manga folders"), #self:getFolders()) end
+                return self:inMangaFolder(file) and _("This book: inside a manga folder") or _("This book: outside the manga folders")
+            end,
+            enabled_func = function() return false end,
+            separator = true,
+        },
+        {
+            text = _("Add this book's folder"),
+            enabled_func = function() return file ~= nil and not self:isFolderMarked(file:match("(.*)/")) end,
+            callback = function() self:toggleFolder(file:match("(.*)/")) end,
+        },
+        {
+            text = _("Choose folder…"),
+            callback = function() self:chooseFolder() end,
+            separator = true,
+        },
+    }
+    for _, d in ipairs(folders) do
+        table.insert(items, {
+            text = d,
+            checked_func = function() return self:isFolderMarked(d) ~= nil end,
+            callback = function()
+                UIManager:show(ConfirmBox:new{
+                    text = T(_("Stop syncing books in %1?"), d),
+                    ok_text = _("Remove"),
+                    ok_callback = function() self:toggleFolder(d) end,
+                })
+            end,
+        })
+    end
+    return items
 end
 
 -- dead simple .env parser, that's all I need
@@ -123,10 +257,6 @@ function MALSync:onFlushSettings()
     self:save()
 end
 
-local function notify(text, timeout)
-    UIManager:show(InfoMessage:new{ text = text, timeout = timeout or 3 })
-end
-
 function MALSync:getBookInfo()
     local file = self.ui.document and self.ui.document.file
     if not file then return nil end
@@ -192,6 +322,13 @@ end
 
 function MALSync:onReaderReady()
     if not self.settings:isTrue("enabled") or not self.api then return end
+    -- things that had to wait for a screen: scores asked at close, stale series
+    UIManager:scheduleIn(4, function()
+        self:askPendingScore()
+        if NetworkMgr:isOnline() then self:checkStale() end
+    end)
+    -- outside the manga folders (if I set any): not my business
+    if not self:inMangaFolder(self.ui.document and self.ui.document.file) then return end
     local info = self:getBookInfo()
     -- no volume or chapter means it's probably a regular book, skip it
     -- (can still be sent by hand from the menu)
@@ -207,6 +344,7 @@ end
 function MALSync:markFinished()
     if self.finished_sent or not self.settings:isTrue("enabled") or not self.api then return end
     if self:getPercent() < FINISH_THRESHOLD then return end
+    if not self:inMangaFolder(self.ui.document and self.ui.document.file) then return end
     local info = self:getBookInfo()
     if not info or (not info.volume and not info.chapter) then return end
     self.finished_sent = true
@@ -256,6 +394,7 @@ function MALSync:onEndOfBook()
 end
 
 function MALSync:onCloseDocument()
+    self.closing = true
     self:pushProgress(true)
     self:markFinished()
     -- can't show dialogs here, only send what already has an id
@@ -265,6 +404,7 @@ end
 
 function MALSync:onNetworkConnected()
     UIManager:scheduleIn(1, function() self:flushIfOnline(true) end)
+    UIManager:scheduleIn(8, function() self:checkStale() end)
     -- look for a new version at most once a day
     local last = self.settings:readSetting("last_update_check") or 0
     if self.settings:isTrue("auto_update") and os.time() - last > 24 * 3600 then
@@ -332,7 +472,12 @@ function MALSync:flushQueue(interactive)
     self.flushing = true
     local remaining = {}
     local sent = 0
-    for _, item in ipairs(self.queue) do
+    -- the book I have open goes first, so its series gets resolved before old leftovers
+    local current = self.book_info and self.book_info.key
+    local ordered = {}
+    for _, item in ipairs(self.queue) do if item.key == current then table.insert(ordered, item) end end
+    for _, item in ipairs(self.queue) do if item.key ~= current then table.insert(ordered, item) end end
+    for _, item in ipairs(ordered) do
         local mapping = self.mappings[item.key]
         if not mapping and interactive and not self.dialog_open then
             -- without an exact match this opens the picker and returns nil
@@ -344,6 +489,9 @@ function MALSync:flushQueue(interactive)
             local ok, err = self:applyUpdate(mapping, item)
             if ok then
                 sent = sent + 1
+                if item.event == "open" or item.event == "progress" or item.event == "finish" then
+                    mapping.last_read = math.max(mapping.last_read or 0, item.time or os.time())
+                end
             elseif err == "network_error" then
                 table.insert(remaining, item)
             else
@@ -414,6 +562,19 @@ function MALSync:applyUpdate(mapping, item)
     local cur_ch = tonumber(cur.num_chapters_read) or 0
     local total_vol = tonumber(manga.num_volumes) or 0
     local total_ch = tonumber(manga.num_chapters) or 0
+
+    -- events that come from my own answers, not from reading
+    if item.event == "score" or item.event == "on_hold" then
+        local f = item.event == "score" and { score = item.score } or { status = "on_hold" }
+        if item.event == "on_hold" and cur_status ~= "reading" then return true end
+        local res, e = self.api:updateMangaStatus(mapping.id, f)
+        if not res then return nil, e end
+        if self.ui and self.ui.document and not self.closing then
+            notify(T(_("MAL: %1 → %2"), manga.title, item.event == "score" and T(_("score %1"), item.score) or "on_hold"), 2)
+        end
+        return true
+    end
+
     local vols = self:getVolumeTable(mapping, manga)
 
     -- how far I've read, as far as this item can tell
@@ -463,10 +624,104 @@ function MALSync:applyUpdate(mapping, item)
     if fields.status then table.insert(parts, fields.status) end
     if fields.num_volumes_read then table.insert(parts, T(_("vol. %1"), fields.num_volumes_read)) end
     if fields.num_chapters_read then table.insert(parts, T(_("ch. %1"), fields.num_chapters_read)) end
-    if self.ui and self.ui.document then
+    if self.ui and self.ui.document and not self.closing then
         notify(T(_("MAL: %1 → %2"), manga.title, table.concat(parts, ", ")), 2)
     end
+    -- just finished the series: ask for a score if it doesn't have one yet
+    if fields.status == "completed" and (tonumber(cur.score) or 0) == 0 and self.settings:isTrue("ask_score") then
+        self.pending_scores[tostring(mapping.id)] = { key = item.key, title = manga.title }
+        self.settings:saveSetting("pending_scores", self.pending_scores)
+        if not self.closing then UIManager:scheduleIn(3, function() self:askPendingScore() end) end
+    end
     return true
+end
+
+-- score dialog ----------------------------------------------------------------
+
+function MALSync:askPendingScore()
+    if self.dialog_open or self.closing then return end
+    local id, p = next(self.pending_scores)
+    if not id then return end
+    local dialog
+    local function done(score)
+        UIManager:close(dialog)
+        self.dialog_open = false
+        self.pending_scores[id] = nil
+        self.settings:saveSetting("pending_scores", self.pending_scores)
+        if score then
+            table.insert(self.queue, { key = p.key, title = p.title, event = "score", score = score, time = os.time() })
+            self:save()
+            self:flushIfOnline(false)
+        end
+    end
+    local function btn(n) return { text = tostring(n), callback = function() done(n) end } end
+    dialog = ButtonDialog:new{
+        title = T(_("You finished %1. What score do you give it?"), p.title),
+        buttons = {
+            { btn(1), btn(2), btn(3), btn(4), btn(5) },
+            { btn(6), btn(7), btn(8), btn(9), btn(10) },
+            { { text = _("No score"), callback = function() done(nil) end } },
+        },
+    }
+    self.dialog_open = true
+    UIManager:show(dialog)
+end
+
+-- on hold suggestions ---------------------------------------------------------
+
+-- once a day, look for a series I haven't touched in a while that's still "reading" on MAL
+function MALSync:checkStale(force)
+    local weeks = tonumber(self.settings:readSetting("onhold_weeks")) or 0
+    if weeks <= 0 or not self.api or self.dialog_open or self.closing then return end
+    local now = os.time()
+    if not force and now - (self.settings:readSetting("last_stale_check") or 0) < DAY then return end
+    self.settings:saveSetting("last_stale_check", now)
+
+    local current = self.book_info and self.book_info.key
+    for key, m in pairs(self.mappings) do
+        if m.id and m.last_read and not m.no_onhold and key ~= current
+           and now - m.last_read > weeks * 7 * DAY then
+            local manga = self.api:getManga(m.id)
+            if not manga then return end -- offline or MAL down, try another day
+            local status = manga.my_list_status and manga.my_list_status.status
+            if status == "reading" then
+                self:askOnHold(key, m, manga.title, math.floor((now - m.last_read) / (7 * DAY)))
+                return -- one question at a time
+            end
+            -- not reading anymore, stop watching it until I open it again
+            m.last_read = nil
+            self:save()
+        end
+    end
+end
+
+function MALSync:askOnHold(key, m, title, weeks_ago)
+    local dialog
+    local function close() UIManager:close(dialog); self.dialog_open = false end
+    dialog = ButtonDialog:new{
+        title = T(_("You haven't read %1 in %2 weeks. Put it on hold on MAL?"), title, weeks_ago),
+        buttons = {
+            { { text = _("Put on hold"), callback = function()
+                close()
+                m.last_read = nil
+                table.insert(self.queue, { key = key, title = title, event = "on_hold", time = os.time() })
+                self:save()
+                self:flushIfOnline(false)
+            end } },
+            { { text = _("I'm still reading it"), callback = function()
+                close()
+                m.last_read = os.time()
+                self:save()
+            end } },
+            { { text = _("Never ask for this series"), callback = function()
+                close()
+                m.no_onhold = true
+                self:save()
+            end } },
+        },
+    }
+    self.dialog_open = true
+    UIManager:show(dialog)
 end
 
 local function titlesOf(node)
@@ -665,6 +920,13 @@ function MALSync:getSubMenu()
             callback = function() self.settings:toggle("enabled"); self.settings:flush() end,
         },
         {
+            text_func = function()
+                local n = #self:getFolders()
+                return n == 0 and _("Manga folders: all") or T(_("Manga folders: %1"), n)
+            end,
+            sub_item_table_func = function() return self:getFoldersMenu() end,
+        },
+        {
             text = _("Confirm new series before linking them"),
             checked_func = function() return self.settings:isTrue("confirm_new") end,
             callback = function() self.settings:toggle("confirm_new"); self.settings:flush() end,
@@ -674,6 +936,30 @@ function MALSync:getSubMenu()
             text = _("Use Wikipedia for volume/chapter info"),
             checked_func = function() return self.settings:isTrue("use_wikipedia") end,
             callback = function() self.settings:toggle("use_wikipedia"); self.settings:flush() end,
+        },
+        {
+            text = _("Ask for a score when I complete a series"),
+            checked_func = function() return self.settings:isTrue("ask_score") end,
+            callback = function() self.settings:toggle("ask_score"); self.settings:flush() end,
+        },
+        {
+            text_func = function()
+                local w = tonumber(self.settings:readSetting("onhold_weeks")) or 0
+                if w <= 0 then return _("Suggest On hold: never") end
+                return T(_("Suggest On hold after %1 weeks without reading"), w)
+            end,
+            sub_item_table_func = function()
+                local items = {}
+                for _, w in ipairs({ 0, 2, 4, 8, 12 }) do
+                    table.insert(items, {
+                        text = w == 0 and _("Never") or T(_("%1 weeks"), w),
+                        radio = true,
+                        checked_func = function() return (tonumber(self.settings:readSetting("onhold_weeks")) or 0) == w end,
+                        callback = function() self.settings:saveSetting("onhold_weeks", w); self.settings:flush() end,
+                    })
+                end
+                return items
+            end,
             separator = true,
         },
         {

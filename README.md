@@ -12,11 +12,13 @@ One Piece - c1100.cbz                 ->  One Piece, ch 1100
 
 - When you **open** a volume it gets set to *Reading*, and everything before it counts as read (opening vol 2 = vol 1 and ch 1-4 read).
 - While you **read**, it follows the book's table of contents. Moving from "Blue Lock 33" to "Blue Lock 34" marks chapter 33 as read (sent ~15 s after you stop flipping, so skimming doesn't spam MAL).
-- When you **finish** it (95% or more) that volume gets added. If it was the last one, the series goes to *Completed*.
+- When you **finish** it (95% or more) that volume gets added. If it was the last one, the series goes to *Completed* and you get asked for a score (1-10, or skip).
+- If a series is still *Reading* on MAL but you haven't opened it in a few weeks (4 by default), it asks whether to put it *On hold*. One question at a time, at most once a day.
 - The first time it sees a series it searches MAL. If the name isn't an exact match it asks you which one it is, and remembers it after that.
 - No WiFi? Updates get queued and sent once you're back online.
 - It never lowers your progress and never touches anything already *Completed*.
 - Files with no volume or chapter number (novels, regular books) are skipped.
+- You can limit it to your manga folders, so nothing outside them ever gets synced.
 - Updates itself from this repo's releases.
 
 Volume/chapter detection understands `v03`, `Vol. 3`, `Volume 3`, `Tomo 3`, `c012`, `ch. 12`, `Chapter 12`, `Capitulo 12` and `#005-013` style ranges.
@@ -66,8 +68,11 @@ Under **Tools → MyAnimeList Autotrack**:
 
 - **Language**: English or Español. By default it follows KOReader's language (and falls back to English).
 - **Enabled**: turns everything on/off.
+- **Manga folders**: only sync books inside these folders (subfolders included). Add the open book's folder in one tap, pick one with the folder chooser, or tap a folder in the list to remove it. Empty list = every folder counts. You can also long-press a folder in the file manager and choose **Mark as manga folder**.
 - **Confirm new series**: ask before linking a series that isn't an exact match.
 - **Use Wikipedia**: fill in missing volume/chapter info from Wikipedia.
+- **Ask for a score**: show the 1-10 score dialog when a series gets completed.
+- **Suggest On hold**: never, or after 2/4/8/12 weeks without reading a series.
 - **Detected / MAL series / Wikipedia**: what it parsed, which MAL entry it's linked to, and which Wikipedia list it found.
 - **Change / search series**: search by hand or paste a MAL ID.
 - **Ignore this series**: never sync this one.
@@ -94,11 +99,12 @@ CI runs all of that on every push and PR.
 
 To cut a release:
 
-1. Bump `version` in `_meta.lua` (e.g. `"0.2"`).
-2. Commit and push.
-3. `git tag v0.2 && git push origin v0.2`
+1. Bump `version` in `_meta.lua` (e.g. `"0.2.0"`).
+2. `python tools/changelog.py --write --next v0.2.0` to refresh `CHANGELOG.md`.
+3. Commit both (`chore(release): 0.2.0`), merge to `main`.
+4. `git tag v0.2.0 && git push origin v0.2.0`
 
-The release workflow checks the tag matches `_meta.lua`, builds the zip and publishes the release. Installed copies pick it up on their own.
+The release workflow checks the tag matches `_meta.lua`, builds the zip and publishes the release. Its notes are generated from the conventional commits since the previous tag, grouped by type (features, fixes, docs...). Installed copies pick the new version up on their own.
 
 ## License
 
