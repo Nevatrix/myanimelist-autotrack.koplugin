@@ -73,7 +73,12 @@ local function open(file, pct, settings)
                toc = { toc = {}, fillToc = function() end, getTocTitleByPage = function() return "" end } },
     }, { __index = Plugin })
     p:init()
-    if settings then p.settings = settings; p.mappings = settings:readSetting("mappings"); p.queue = settings:readSetting("queue") end
+    if settings then
+        p.settings = settings
+        p.mappings = settings:readSetting("mappings")
+        p.queue = settings:readSetting("queue")
+        p.pending_scores = settings:readSetting("pending_scores", {})
+    end
     p.api = fake_api
     return p
 end
@@ -192,6 +197,49 @@ p.settings:saveSetting("wiki_cache", { ["3008"] = { t = os.time(), vols = (funct
     return v
 end)() } })
 check("wikipedia ignored when volumes don't fit", Plugin2:getVolumeTable({ id = 3008 }, jojo4) == nil)
+
+-- score when a series gets completed -------------------------------------
+local short = { id = 777, title = "Short Manga", media_type = "manga", num_volumes = 2, num_chapters = 10,
+    alternative_titles = { en = "Short Manga" } }
+local short_status = { status = "reading", num_volumes_read = 1, num_chapters_read = 5, score = 0 }
+local short_api = setmetatable({
+    searchManga = function() return { short } end,
+    getManga = function() return setmetatable({ my_list_status = short_status }, { __index = short }) end,
+    updateMangaStatus = function(_, _, f)
+        table.insert(patches, f)
+        for k, val in pairs(f) do short_status[k] = val end
+        return {}
+    end,
+}, { __index = fake_api })
+patches, shown = {}, {}
+p.settings:saveSetting("queue", {}) -- leftovers from the jojo test
+local s = open("/mnt/us/documents/Manga/Short Manga v02.cbz", 0.99, p.settings)
+s.api = short_api
+s:onReaderReady()
+s:onEndOfBook()
+local completed = false
+for _, f in ipairs(patches) do if f.status == "completed" then completed = true end end
+check("last volume completes the series", completed)
+local dlg2 = shown[#shown]
+check("asks for a score", dlg2 and dlg2.title and dlg2.title:find("What score") ~= nil)
+dlg2.buttons[2][3].callback() -- 8
+check("score 8 sent", patches[#patches].score == 8)
+check("pending score cleared", next(s.pending_scores) == nil)
+
+-- score asked at close waits for the next book
+short_status.status, short_status.score = "reading", 0
+patches, shown = {}, {}
+local s2 = open("/mnt/us/documents/Manga/Short Manga v02.cbz", 0.99, p.settings)
+s2.api = short_api
+s2.settings.data.queue = {}
+s2.queue = s2.settings.data.queue
+s2.book_info = s2:getBookInfo()
+s2:onCloseDocument()
+check("no dialog while closing", #shown == 0 and next(s2.pending_scores) ~= nil)
+local s3 = open("/mnt/us/documents/Libros/Some Novel.epub", 0.1, p.settings)
+s3.api = short_api
+s3:onReaderReady()
+check("asked on the next open", shown[#shown] and shown[#shown].title:find("What score") ~= nil)
 
 print(fails == 0 and "All good" or (fails .. " failed"))
 if fails > 0 then os.exit(1) end

@@ -52,6 +52,10 @@ local es = {
     ["Wikipedia: not checked yet"] = "Wikipedia: aún no consultada",
     ["Wikipedia: no chapter list found"] = "Wikipedia: no encontré lista de capítulos",
     ["Wikipedia: %1 (%2 vols)"] = "Wikipedia: %1 (%2 tomos)",
+    ["score %1"] = "nota %1",
+    ["You finished %1. What score do you give it?"] = "Terminaste %1. ¿Qué nota le das?",
+    ["No score"] = "Sin nota",
+    ["Ask for a score when I complete a series"] = "Pedir nota al completar una serie",
 }
 
 local tables = { es = es }

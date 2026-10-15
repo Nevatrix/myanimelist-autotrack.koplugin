@@ -47,6 +47,8 @@ function MALSync:init()
     if self.settings:readSetting("confirm_new") == nil then self.settings:saveSetting("confirm_new", true) end
     if self.settings:readSetting("auto_update") == nil then self.settings:saveSetting("auto_update", true) end
     if self.settings:readSetting("use_wikipedia") == nil then self.settings:saveSetting("use_wikipedia", true) end
+    if self.settings:readSetting("ask_score") == nil then self.settings:saveSetting("ask_score", true) end
+    self.pending_scores = self.settings:readSetting("pending_scores", {})
     I18n.set(self.settings:readSetting("language", "auto"))
     self:loadCredentials()
     self.ui.menu:registerToMainMenu(self)
@@ -192,6 +194,8 @@ end
 
 function MALSync:onReaderReady()
     if not self.settings:isTrue("enabled") or not self.api then return end
+    -- a score asked while closing the last book waits for this one
+    UIManager:scheduleIn(4, function() self:askPendingScore() end)
     local info = self:getBookInfo()
     -- no volume or chapter means it's probably a regular book, skip it
     -- (can still be sent by hand from the menu)
@@ -256,6 +260,7 @@ function MALSync:onEndOfBook()
 end
 
 function MALSync:onCloseDocument()
+    self.closing = true
     self:pushProgress(true)
     self:markFinished()
     -- can't show dialogs here, only send what already has an id
@@ -419,6 +424,17 @@ function MALSync:applyUpdate(mapping, item)
     local cur_ch = tonumber(cur.num_chapters_read) or 0
     local total_vol = tonumber(manga.num_volumes) or 0
     local total_ch = tonumber(manga.num_chapters) or 0
+
+    -- a score I picked in the dialog
+    if item.event == "score" then
+        local res, e = self.api:updateMangaStatus(mapping.id, { score = item.score })
+        if not res then return nil, e end
+        if self.ui and self.ui.document and not self.closing then
+            notify(T(_("MAL: %1 → %2"), manga.title, T(_("score %1"), item.score)), 2)
+        end
+        return true
+    end
+
     local vols = self:getVolumeTable(mapping, manga)
 
     -- how far I've read, as far as this item can tell
@@ -468,10 +484,47 @@ function MALSync:applyUpdate(mapping, item)
     if fields.status then table.insert(parts, fields.status) end
     if fields.num_volumes_read then table.insert(parts, T(_("vol. %1"), fields.num_volumes_read)) end
     if fields.num_chapters_read then table.insert(parts, T(_("ch. %1"), fields.num_chapters_read)) end
-    if self.ui and self.ui.document then
+    if self.ui and self.ui.document and not self.closing then
         notify(T(_("MAL: %1 → %2"), manga.title, table.concat(parts, ", ")), 2)
     end
+    -- just finished the series: ask for a score if it doesn't have one yet
+    if fields.status == "completed" and (tonumber(cur.score) or 0) == 0 and self.settings:isTrue("ask_score") then
+        self.pending_scores[tostring(mapping.id)] = { key = item.key, title = manga.title }
+        self.settings:saveSetting("pending_scores", self.pending_scores)
+        if not self.closing then UIManager:scheduleIn(3, function() self:askPendingScore() end) end
+    end
     return true
+end
+
+-- score dialog ----------------------------------------------------------------
+
+function MALSync:askPendingScore()
+    if self.dialog_open or self.closing then return end
+    local id, p = next(self.pending_scores)
+    if not id then return end
+    local dialog
+    local function done(score)
+        UIManager:close(dialog)
+        self.dialog_open = false
+        self.pending_scores[id] = nil
+        self.settings:saveSetting("pending_scores", self.pending_scores)
+        if score then
+            table.insert(self.queue, { key = p.key, title = p.title, event = "score", score = score, time = os.time() })
+            self:save()
+            self:flushIfOnline(false)
+        end
+    end
+    local function btn(n) return { text = tostring(n), callback = function() done(n) end } end
+    dialog = ButtonDialog:new{
+        title = T(_("You finished %1. What score do you give it?"), p.title),
+        buttons = {
+            { btn(1), btn(2), btn(3), btn(4), btn(5) },
+            { btn(6), btn(7), btn(8), btn(9), btn(10) },
+            { { text = _("No score"), callback = function() done(nil) end } },
+        },
+    }
+    self.dialog_open = true
+    UIManager:show(dialog)
 end
 
 local function titlesOf(node)
@@ -679,6 +732,11 @@ function MALSync:getSubMenu()
             text = _("Use Wikipedia for volume/chapter info"),
             checked_func = function() return self.settings:isTrue("use_wikipedia") end,
             callback = function() self.settings:toggle("use_wikipedia"); self.settings:flush() end,
+        },
+        {
+            text = _("Ask for a score when I complete a series"),
+            checked_func = function() return self.settings:isTrue("ask_score") end,
+            callback = function() self.settings:toggle("ask_score"); self.settings:flush() end,
             separator = true,
         },
         {
