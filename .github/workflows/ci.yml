@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install luajit and luacheck
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q luajit lua-check
+
+      - name: Lint
+        run: luacheck .
+
+      - name: Parser tests
+        run: luajit tools/test_parser.lua
+
+      - name: Wikipedia parser tests
+        run: luajit tools/test_wiki.lua
+
+      - name: Flow tests
+        run: luajit tools/test_flow.lua
