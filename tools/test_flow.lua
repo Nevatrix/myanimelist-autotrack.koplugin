@@ -161,5 +161,37 @@ w2:onReaderReady()
 check("chapter only + wikipedia: ch 20 is in vol 3, so 2 vols read", patches[3] and patches[3].num_volumes_read == 2 and patches[3].num_chapters_read == 19)
 check("wikipedia is cached", wiki_calls == calls)
 
+-- calibre/KCC style names and a title MAL can't find as-is ------------------
+local queries = {}
+local jojo4 = { id = 3008, title = "JoJo no Kimyou na Bouken Part 4: Diamond wa Kudakenai", media_type = "manga", num_volumes = 18,
+    alternative_titles = { en = "JoJo's Bizarre Adventure Part 4: Diamond Is Unbreakable" } }
+local jojo5 = { id = 1706, title = "JoJo no Kimyou na Bouken Part 5: Ougon no Kaze", media_type = "manga", num_volumes = 17,
+    alternative_titles = { en = "JoJo's Bizarre Adventure Part 5: Golden Wind" } }
+local jojo_api = setmetatable({
+    searchManga = function(_, query)
+        table.insert(queries, query)
+        if query:find("Unbreakeable") or query:find("Diamond") then return {} end
+        return { jojo5, jojo4 }
+    end,
+}, { __index = fake_api })
+shown = {}
+local j = open("/mnt/us/documents/KCC/Jojo's Bizarre Adventure P4 Diamond is Unbreakeable - Tomo 4 - KCC.mobi", 0.1, p.settings)
+j.ui.doc_props = { authors = "KCC" }
+j.api = jojo_api
+j:onReaderReady()
+check("drops the - KCC suffix", j.book_info.title == "Jojo's Bizarre Adventure P4 Diamond is Unbreakeable")
+check("retries with shorter queries", #queries >= 2 and queries[1]:find("Part 4"))
+local dlg = shown[#shown]
+check("picker shows Part 4 first", dlg and dlg.buttons and dlg.buttons[1][1].text:find("Part 4: Diamond") ~= nil)
+
+-- wikipedia table that doesn't fit the MAL entry gets ignored
+local Plugin2 = j
+p.settings:saveSetting("wiki_cache", { ["3008"] = { t = os.time(), vols = (function()
+    local v = {}
+    for i = 1, 129 do v[i] = { i * 9 - 8, i * 9 } end
+    return v
+end)() } })
+check("wikipedia ignored when volumes don't fit", Plugin2:getVolumeTable({ id = 3008 }, jojo4) == nil)
+
 print(fails == 0 and "All good" or (fails .. " failed"))
 if fails > 0 then os.exit(1) end
