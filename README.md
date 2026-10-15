@@ -13,6 +13,7 @@ One Piece - c1100.cbz                 ->  One Piece, ch 1100
 - When you **open** a volume it gets set to *Reading*, and everything before it counts as read (opening vol 2 = vol 1 and ch 1-4 read).
 - While you **read**, it follows the book's table of contents. Moving from "Blue Lock 33" to "Blue Lock 34" marks chapter 33 as read (sent ~15 s after you stop flipping, so skimming doesn't spam MAL).
 - When you **finish** it (95% or more) that volume gets added. If it was the last one, the series goes to *Completed* and you get asked for a score (1-10, or skip).
+- If a series is still *Reading* on MAL but you haven't opened it in a few weeks (4 by default), it asks whether to put it *On hold*. One question at a time, at most once a day.
 - The first time it sees a series it searches MAL. If the name isn't an exact match it asks you which one it is, and remembers it after that.
 - No WiFi? Updates get queued and sent once you're back online.
 - It never lowers your progress and never touches anything already *Completed*.
@@ -69,6 +70,7 @@ Under **Tools → MyAnimeList Autotrack**:
 - **Confirm new series**: ask before linking a series that isn't an exact match.
 - **Use Wikipedia**: fill in missing volume/chapter info from Wikipedia.
 - **Ask for a score**: show the 1-10 score dialog when a series gets completed.
+- **Suggest On hold**: never, or after 2/4/8/12 weeks without reading a series.
 - **Detected / MAL series / Wikipedia**: what it parsed, which MAL entry it's linked to, and which Wikipedia list it found.
 - **Change / search series**: search by hand or paste a MAL ID.
 - **Ignore this series**: never sync this one.

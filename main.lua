@@ -24,6 +24,7 @@ local FINISH_THRESHOLD = 0.95 -- past this, the volume counts as read
 local PROGRESS_DELAY = 15 -- seconds after a chapter change before sending it
 local WIKI_TTL = 14 * 24 * 3600
 local WIKI_MISS_TTL = 7 * 24 * 3600
+local DAY = 24 * 3600
 local NOVEL_TYPES = { light_novel = true, novel = true }
 
 local MALSync = WidgetContainer:extend{
@@ -48,6 +49,7 @@ function MALSync:init()
     if self.settings:readSetting("auto_update") == nil then self.settings:saveSetting("auto_update", true) end
     if self.settings:readSetting("use_wikipedia") == nil then self.settings:saveSetting("use_wikipedia", true) end
     if self.settings:readSetting("ask_score") == nil then self.settings:saveSetting("ask_score", true) end
+    if self.settings:readSetting("onhold_weeks") == nil then self.settings:saveSetting("onhold_weeks", 4) end
     self.pending_scores = self.settings:readSetting("pending_scores", {})
     I18n.set(self.settings:readSetting("language", "auto"))
     self:loadCredentials()
@@ -194,8 +196,11 @@ end
 
 function MALSync:onReaderReady()
     if not self.settings:isTrue("enabled") or not self.api then return end
-    -- a score asked while closing the last book waits for this one
-    UIManager:scheduleIn(4, function() self:askPendingScore() end)
+    -- things that had to wait for a screen: scores asked at close, stale series
+    UIManager:scheduleIn(4, function()
+        self:askPendingScore()
+        if NetworkMgr:isOnline() then self:checkStale() end
+    end)
     local info = self:getBookInfo()
     -- no volume or chapter means it's probably a regular book, skip it
     -- (can still be sent by hand from the menu)
@@ -270,6 +275,7 @@ end
 
 function MALSync:onNetworkConnected()
     UIManager:scheduleIn(1, function() self:flushIfOnline(true) end)
+    UIManager:scheduleIn(8, function() self:checkStale() end)
     -- look for a new version at most once a day
     local last = self.settings:readSetting("last_update_check") or 0
     if self.settings:isTrue("auto_update") and os.time() - last > 24 * 3600 then
@@ -354,6 +360,9 @@ function MALSync:flushQueue(interactive)
             local ok, err = self:applyUpdate(mapping, item)
             if ok then
                 sent = sent + 1
+                if item.event == "open" or item.event == "progress" or item.event == "finish" then
+                    mapping.last_read = math.max(mapping.last_read or 0, item.time or os.time())
+                end
             elseif err == "network_error" then
                 table.insert(remaining, item)
             else
@@ -425,12 +434,14 @@ function MALSync:applyUpdate(mapping, item)
     local total_vol = tonumber(manga.num_volumes) or 0
     local total_ch = tonumber(manga.num_chapters) or 0
 
-    -- a score I picked in the dialog
-    if item.event == "score" then
-        local res, e = self.api:updateMangaStatus(mapping.id, { score = item.score })
+    -- events that come from my own answers, not from reading
+    if item.event == "score" or item.event == "on_hold" then
+        local f = item.event == "score" and { score = item.score } or { status = "on_hold" }
+        if item.event == "on_hold" and cur_status ~= "reading" then return true end
+        local res, e = self.api:updateMangaStatus(mapping.id, f)
         if not res then return nil, e end
         if self.ui and self.ui.document and not self.closing then
-            notify(T(_("MAL: %1 → %2"), manga.title, T(_("score %1"), item.score)), 2)
+            notify(T(_("MAL: %1 → %2"), manga.title, item.event == "score" and T(_("score %1"), item.score) or "on_hold"), 2)
         end
         return true
     end
@@ -521,6 +532,63 @@ function MALSync:askPendingScore()
             { btn(1), btn(2), btn(3), btn(4), btn(5) },
             { btn(6), btn(7), btn(8), btn(9), btn(10) },
             { { text = _("No score"), callback = function() done(nil) end } },
+        },
+    }
+    self.dialog_open = true
+    UIManager:show(dialog)
+end
+
+-- on hold suggestions ---------------------------------------------------------
+
+-- once a day, look for a series I haven't touched in a while that's still "reading" on MAL
+function MALSync:checkStale(force)
+    local weeks = tonumber(self.settings:readSetting("onhold_weeks")) or 0
+    if weeks <= 0 or not self.api or self.dialog_open or self.closing then return end
+    local now = os.time()
+    if not force and now - (self.settings:readSetting("last_stale_check") or 0) < DAY then return end
+    self.settings:saveSetting("last_stale_check", now)
+
+    local current = self.book_info and self.book_info.key
+    for key, m in pairs(self.mappings) do
+        if m.id and m.last_read and not m.no_onhold and key ~= current
+           and now - m.last_read > weeks * 7 * DAY then
+            local manga = self.api:getManga(m.id)
+            if not manga then return end -- offline or MAL down, try another day
+            local status = manga.my_list_status and manga.my_list_status.status
+            if status == "reading" then
+                self:askOnHold(key, m, manga.title, math.floor((now - m.last_read) / (7 * DAY)))
+                return -- one question at a time
+            end
+            -- not reading anymore, stop watching it until I open it again
+            m.last_read = nil
+            self:save()
+        end
+    end
+end
+
+function MALSync:askOnHold(key, m, title, weeks_ago)
+    local dialog
+    local function close() UIManager:close(dialog); self.dialog_open = false end
+    dialog = ButtonDialog:new{
+        title = T(_("You haven't read %1 in %2 weeks. Put it on hold on MAL?"), title, weeks_ago),
+        buttons = {
+            { { text = _("Put on hold"), callback = function()
+                close()
+                m.last_read = nil
+                table.insert(self.queue, { key = key, title = title, event = "on_hold", time = os.time() })
+                self:save()
+                self:flushIfOnline(false)
+            end } },
+            { { text = _("I'm still reading it"), callback = function()
+                close()
+                m.last_read = os.time()
+                self:save()
+            end } },
+            { { text = _("Never ask for this series"), callback = function()
+                close()
+                m.no_onhold = true
+                self:save()
+            end } },
         },
     }
     self.dialog_open = true
@@ -737,6 +805,25 @@ function MALSync:getSubMenu()
             text = _("Ask for a score when I complete a series"),
             checked_func = function() return self.settings:isTrue("ask_score") end,
             callback = function() self.settings:toggle("ask_score"); self.settings:flush() end,
+        },
+        {
+            text_func = function()
+                local w = tonumber(self.settings:readSetting("onhold_weeks")) or 0
+                if w <= 0 then return _("Suggest On hold: never") end
+                return T(_("Suggest On hold after %1 weeks without reading"), w)
+            end,
+            sub_item_table_func = function()
+                local items = {}
+                for _, w in ipairs({ 0, 2, 4, 8, 12 }) do
+                    table.insert(items, {
+                        text = w == 0 and _("Never") or T(_("%1 weeks"), w),
+                        radio = true,
+                        checked_func = function() return (tonumber(self.settings:readSetting("onhold_weeks")) or 0) == w end,
+                        callback = function() self.settings:saveSetting("onhold_weeks", w); self.settings:flush() end,
+                    })
+                end
+                return items
+            end,
             separator = true,
         },
         {

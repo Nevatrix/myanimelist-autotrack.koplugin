@@ -55,7 +55,15 @@ local es = {
     ["score %1"] = "nota %1",
     ["You finished %1. What score do you give it?"] = "Terminaste %1. ¿Qué nota le das?",
     ["No score"] = "Sin nota",
+    ["You haven't read %1 in %2 weeks. Put it on hold on MAL?"] = "No lees %1 hace %2 semanas. ¿La pongo en On hold en MAL?",
+    ["Put on hold"] = "Poner en On hold",
+    ["I'm still reading it"] = "Todavía la leo",
+    ["Never ask for this series"] = "No preguntar por esta serie",
     ["Ask for a score when I complete a series"] = "Pedir nota al completar una serie",
+    ["Suggest On hold: never"] = "Sugerir On hold: nunca",
+    ["Suggest On hold after %1 weeks without reading"] = "Sugerir On hold tras %1 semanas sin leer",
+    ["Never"] = "Nunca",
+    ["%1 weeks"] = "%1 semanas",
 }
 
 local tables = { es = es }

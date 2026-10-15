@@ -241,5 +241,22 @@ s3.api = short_api
 s3:onReaderReady()
 check("asked on the next open", shown[#shown] and shown[#shown].title:find("What score") ~= nil)
 
+-- on hold suggestion ---------------------------------------------------------
+short_status.status = "reading"
+patches, shown = {}, {}
+local h = open("/mnt/us/documents/Libros/Other.epub", 0.1, p.settings)
+h.api = short_api
+h.dialog_open = false
+h.mappings["short manga"].last_read = os.time() - 40 * 24 * 3600
+h:checkStale(true)
+local q2 = shown[#shown]
+check("suggests on hold after 4 weeks", q2 and q2.title:find("on hold") ~= nil)
+q2.buttons[1][1].callback()
+check("on_hold sent", patches[#patches] and patches[#patches].status == "on_hold")
+shown = {}
+h.mappings["short manga"].last_read = os.time() - 2 * 24 * 3600
+h:checkStale(true)
+check("no suggestion for something read 2 days ago", #shown == 0)
+
 print(fails == 0 and "All good" or (fails .. " failed"))
 if fails > 0 then os.exit(1) end
