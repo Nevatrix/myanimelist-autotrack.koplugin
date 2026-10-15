@@ -332,7 +332,12 @@ function MALSync:flushQueue(interactive)
     self.flushing = true
     local remaining = {}
     local sent = 0
-    for _, item in ipairs(self.queue) do
+    -- the book I have open goes first, so its series gets resolved before old leftovers
+    local current = self.book_info and self.book_info.key
+    local ordered = {}
+    for _, item in ipairs(self.queue) do if item.key == current then table.insert(ordered, item) end end
+    for _, item in ipairs(self.queue) do if item.key ~= current then table.insert(ordered, item) end end
+    for _, item in ipairs(ordered) do
         local mapping = self.mappings[item.key]
         if not mapping and interactive and not self.dialog_open then
             -- without an exact match this opens the picker and returns nil
