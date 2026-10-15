@@ -1,0 +1,44 @@
+name: Release
+
+# to cut a release: bump "version" in _meta.lua, commit, then
+#   git tag v0.2 && git push origin v0.2
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag matches _meta.lua
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if ! grep -q "version = \"$VERSION\"" _meta.lua; then
+            echo "Tag is $GITHUB_REF_NAME but _meta.lua says:"
+            grep version _meta.lua
+            exit 1
+          fi
+
+      - name: Build the zip
+        run: |
+          DIR=dist/myanimelist-autotrack.koplugin
+          mkdir -p "$DIR"
+          cp *.lua .env.example README.md LICENSE "$DIR"/
+          cd dist && zip -r myanimelist-autotrack.koplugin.zip myanimelist-autotrack.koplugin
+          unzip -l myanimelist-autotrack.koplugin.zip
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/myanimelist-autotrack.koplugin.zip
+          generate_release_notes: true
