@@ -43,7 +43,7 @@ function MALSync:init()
     -- this used to be called malsync, carry over the old settings
     if not self.settings:has("mappings") then
         local old = LuaSettings:open(dir .. "/malsync.lua")
-        for _, k in ipairs({ "mappings", "queue", "credentials", "enabled", "confirm_new" }) do
+        for __, k in ipairs({ "mappings", "queue", "credentials", "enabled", "confirm_new" }) do
             if old:has(k) then self.settings:saveSetting(k, old:readSetting(k)) end
         end
     end
@@ -100,7 +100,7 @@ function MALSync:inMangaFolder(file)
     if #folders == 0 then return true end
     if not file then return false end
     local f = realpath(file)
-    for _, d in ipairs(folders) do
+    for __, d in ipairs(folders) do
         local rd = realpath(d)
         if f == rd or f:sub(1, #rd + 1) == rd .. "/" then return true end
     end
@@ -170,7 +170,7 @@ function MALSync:getFoldersMenu()
             separator = true,
         },
     }
-    for _, d in ipairs(folders) do
+    for __, d in ipairs(folders) do
         table.insert(items, {
             text = d,
             checked_func = function() return self:isFolderMarked(d) ~= nil end,
@@ -298,7 +298,7 @@ function MALSync:getTocRange()
     end)
     if not ok or type(toc) ~= "table" then return nil end
     local nums = {}
-    for _, entry in ipairs(toc) do
+    for __, entry in ipairs(toc) do
         local n = Parser.chapterFromTitle(entry.title)
         if n then table.insert(nums, n) end
     end
@@ -446,7 +446,7 @@ function MALSync:checkUpdate(interactive)
 end
 
 function MALSync:enqueue(info, event)
-    for _, item in ipairs(self.queue) do
+    for __, item in ipairs(self.queue) do
         if item.key == info.key and item.event == event and item.volume == info.volume and item.chapter == info.chapter then
             return
         end
@@ -475,9 +475,9 @@ function MALSync:flushQueue(interactive)
     -- the book I have open goes first, so its series gets resolved before old leftovers
     local current = self.book_info and self.book_info.key
     local ordered = {}
-    for _, item in ipairs(self.queue) do if item.key == current then table.insert(ordered, item) end end
-    for _, item in ipairs(self.queue) do if item.key ~= current then table.insert(ordered, item) end end
-    for _, item in ipairs(ordered) do
+    for __, item in ipairs(self.queue) do if item.key == current then table.insert(ordered, item) end end
+    for __, item in ipairs(self.queue) do if item.key ~= current then table.insert(ordered, item) end end
+    for __, item in ipairs(ordered) do
         local mapping = self.mappings[item.key]
         if not mapping and interactive and not self.dialog_open then
             -- without an exact match this opens the picker and returns nil
@@ -538,7 +538,7 @@ function MALSync:fetchVolumeTable(mapping, manga)
     end
     local alt = manga.alternative_titles or {}
     local titles = {}
-    for _, tt in ipairs({ mapping.title_en, alt.en, manga.title, mapping.title }) do
+    for __, tt in ipairs({ mapping.title_en, alt.en, manga.title, mapping.title }) do
         if tt and tt ~= "" then table.insert(titles, tt) end
     end
     local ok, vols, page = pcall(Wiki.lookup, titles)
@@ -729,21 +729,21 @@ local function titlesOf(node)
     local alt = node.alternative_titles or {}
     if alt.en then table.insert(t, alt.en) end
     if alt.ja then table.insert(t, alt.ja) end
-    for _, s in ipairs(alt.synonyms or {}) do table.insert(t, s) end
+    for __, s in ipairs(alt.synonyms or {}) do table.insert(t, s) end
     return t
 end
 
 function MALSync:pickBest(key, results)
     local candidates = {}
-    for _, node in ipairs(results) do
+    for __, node in ipairs(results) do
         if not NOVEL_TYPES[node.media_type] then table.insert(candidates, node) end
     end
     if #candidates == 0 then candidates = results end
     -- best looking match first; MAL's own ranking is by popularity
     local score = {}
-    for _, node in ipairs(candidates) do
+    for __, node in ipairs(candidates) do
         local s = 0
-        for _, tt in ipairs(titlesOf(node)) do
+        for ___, tt in ipairs(titlesOf(node)) do
             if Parser.normalize(tt) == key then return node, true, candidates end
             s = math.max(s, Parser.similarity(key, tt))
         end
@@ -774,10 +774,11 @@ function MALSync:resolveMapping(item)
             logger.warn("MAL Autotrack: search failed", err)
             return
         end
-        for _, node in ipairs(found) do
+        for __, node in ipairs(found) do
             if not seen[node.id] then seen[node.id] = true; table.insert(results, node) end
         end
-        local _, exact, _, score = self:pickBest(item.key, found)
+        local pick = { self:pickBest(item.key, found) }
+        local exact, score = pick[2], pick[4]
         if #found > 0 and (exact or (score or 0) >= 0.5) then break end
     end
     if #results == 0 then
@@ -950,7 +951,7 @@ function MALSync:getSubMenu()
             end,
             sub_item_table_func = function()
                 local items = {}
-                for _, w in ipairs({ 0, 2, 4, 8, 12 }) do
+                for __, w in ipairs({ 0, 2, 4, 8, 12 }) do
                     table.insert(items, {
                         text = w == 0 and _("Never") or T(_("%1 weeks"), w),
                         radio = true,
@@ -989,7 +990,7 @@ function MALSync:getSubMenu()
                 if not c then return _("Wikipedia: not checked yet") end
                 if not c.vols then return _("Wikipedia: no chapter list found") end
                 local n = 0
-                for _ in pairs(c.vols) do n = n + 1 end
+                for __ in pairs(c.vols) do n = n + 1 end
                 return T(_("Wikipedia: %1 (%2 vols)"), c.page or "?", n)
             end,
             enabled_func = function() return false end,
@@ -1032,7 +1033,7 @@ function MALSync:getSubMenu()
             callback = function()
                 if #self.queue == 0 then return notify(_("Nothing queued.")) end
                 local lines = {}
-                for _, it in ipairs(self.queue) do
+                for __, it in ipairs(self.queue) do
                     table.insert(lines, string.format("%s  %s v%s c%s", it.event, it.title, tostring(it.volume or "-"), tostring(it.chapter or "-")))
                 end
                 UIManager:show(InfoMessage:new{ text = table.concat(lines, "\n") })
@@ -1075,7 +1076,7 @@ end
 
 function MALSync:languageName()
     local choice = self.settings:readSetting("language", "auto")
-    for _, l in ipairs(I18n.languages) do
+    for __, l in ipairs(I18n.languages) do
         if l.code == choice then return l.name end
     end
     return T(_("Automatic (KOReader: %1)"), I18n.koreaderLang())
@@ -1096,7 +1097,7 @@ function MALSync:getLanguageMenu()
         })
     end
     add("auto", T(_("Automatic (KOReader: %1)"), I18n.koreaderLang()))
-    for _, l in ipairs(I18n.languages) do add(l.code, l.name) end
+    for __, l in ipairs(I18n.languages) do add(l.code, l.name) end
     return items
 end
 
