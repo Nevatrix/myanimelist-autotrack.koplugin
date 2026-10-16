@@ -2,6 +2,14 @@
 
 Generated from the commit history by `tools/changelog.py`.
 
+## v0.2.1 (2026-10-15)
+
+### Fixes
+- **changelog:** date the upcoming release from its last commit ([dface8a](https://github.com/Nevatrix/myanimelist-autotrack.koplugin/commit/dface8abbc9b6f7071ca76184e2a02f68ac1da92))
+- **menu:** stop crashing KOReader in the On hold and folder menus ([5b0d92c](https://github.com/Nevatrix/myanimelist-autotrack.koplugin/commit/5b0d92cc82d1a47366573df472e1a198d1536b01))
+
+**Full diff:** [v0.2.0...v0.2.1](https://github.com/Nevatrix/myanimelist-autotrack.koplugin/compare/v0.2.0...v0.2.1)
+
 ## v0.2.0 (2026-10-15)
 
 ### Features
