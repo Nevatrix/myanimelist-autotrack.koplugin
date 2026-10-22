@@ -11,7 +11,12 @@ local new = { new = function(_, o) return o end }
 package.preload["ui/widget/buttondialog"] = stub(new)
 package.preload["ui/widget/confirmbox"] = stub(new)
 package.preload["ui/widget/infomessage"] = stub(new)
-package.preload["ui/widget/inputdialog"] = stub(new)
+package.preload["ui/widget/inputdialog"] = stub({ new = function(_, o)
+    o.onShowKeyboard = function() end
+    o.getInputText = function() return o.input or "" end
+    return o
+end })
+package.preload["ui/widget/pathchooser"] = stub(new)
 package.preload["datastorage"] = stub({ getSettingsDir = function() return "/tmp" end, getDataDir = function() return "/tmp" end })
 local LS = {}
 LS.__index = LS
@@ -292,6 +297,77 @@ check("KCC folder added", fm:isFolderMarked("/mnt/us/documents/KCC") ~= nil)
 row = added.fn("/mnt/us/documents/KCC", false)
 check("now it says unmark", row[1].text == "Unmark as manga folder")
 p.settings:saveSetting("manga_folders", {})
+
+-- every menu entry, in both languages -----------------------------------------
+-- 0.2.0 crashed koreader when opening the "Suggest On hold" submenu: a loop variable
+-- called _ hid the gettext function. walk the whole menu and touch everything.
+fake_api.me = function() return { name = "tester" } end
+Updater.latest = function() return nil, "offline in tests" end
+local function walk(items, path, errors)
+    for i, item in ipairs(items) do
+        local here = path .. "/" .. i
+        for _, fn in ipairs({ "text_func", "checked_func", "enabled_func" }) do
+            if item[fn] then
+                local ok, err = pcall(item[fn])
+                if not ok then table.insert(errors, here .. " " .. fn .. ": " .. tostring(err)) end
+            end
+        end
+        if item.sub_item_table_func then
+            local ok, sub = pcall(item.sub_item_table_func)
+            if ok then walk(sub, here, errors) else table.insert(errors, here .. " submenu: " .. tostring(sub)) end
+        end
+        if item.callback then
+            local ok, err = pcall(item.callback)
+            if not ok then table.insert(errors, here .. " callback: " .. tostring(err)) end
+        end
+    end
+end
+for _, lang in ipairs({ "en", "es" }) do
+    require("i18n").set(lang)
+    p.settings:saveSetting("manga_folders", { "/mnt/us/documents/Manga" })
+    shown = {}
+    local m = open("/mnt/us/documents/Manga/Blue Lock - Tomo 02 (#005-013).mobi", 0.5, p.settings)
+    m.api = fake_api
+    m:onReaderReady()
+    local errors = {}
+    walk(m:getSubMenu(), "", errors)
+    -- dialogs opened from the menu: press every button too
+    -- snapshot: pressing buttons opens more dialogs
+    local opened = {}
+    for _, win in ipairs(shown) do table.insert(opened, win) end
+    for _, win in ipairs(opened) do
+        if win.buttons then
+            for _, btn_row in ipairs(win.buttons) do
+                for _, btn in ipairs(btn_row) do
+                    if btn.callback then
+                        local ok, err = pcall(btn.callback)
+                        if not ok then table.insert(errors, "dialog button " .. tostring(btn.text) .. ": " .. tostring(err)) end
+                    end
+                end
+            end
+        end
+        if win.ok_callback then
+            local ok, err = pcall(win.ok_callback)
+            if not ok then table.insert(errors, "confirm box: " .. tostring(err)) end
+        end
+    end
+    for _, e in ipairs(errors) do print("      " .. e) end
+    check("whole menu works (" .. lang .. ")", #errors == 0)
+end
+require("i18n").set("en")
+
+-- and the cheap check: main.lua must never declare a variable called _
+local src = io.open("main.lua"):read("*a")
+local shadow
+local n = 0
+for line in (src .. "\n"):gmatch("([^\n]*)\n") do
+    n = n + 1
+    if line:match("for%s+_%s*[,=]") or line:match("for%s+_%s+in") or line:match("local%s+_%s*,")
+       or line:match("function%s*%(%s*_%s*[,)]") then
+        shadow = shadow or (n .. ": " .. line)
+    end
+end
+check("main.lua never shadows _ (gettext)" .. (shadow and (" -> line " .. shadow) or ""), shadow == nil)
 
 print(fails == 0 and "All good" or (fails .. " failed"))
 if fails > 0 then os.exit(1) end

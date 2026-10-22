@@ -113,14 +113,14 @@ def release_notes(tag):
 
 
 def full_changelog(next_tag=None):
-    import datetime
     all_tags = tags()
     parts = ["# Changelog", "", "Generated from the commit history by `tools/changelog.py`.", ""]
     unreleased = commits(f"{all_tags[-1]}..HEAD" if all_tags else "HEAD")
     if unreleased:
         if next_tag:
             prev = all_tags[-1] if all_tags else None
-            parts.append(render(f"## {next_tag} ({datetime.date.today().isoformat()})", unreleased, prev, next_tag))
+            # date of the last commit, in its own timezone (the machine running this may be on UTC)
+            parts.append(render(f"## {next_tag} ({tag_date('HEAD')})", unreleased, prev, next_tag))
         else:
             parts.append(render("## Unreleased", unreleased))
     for i in range(len(all_tags) - 1, -1, -1):
